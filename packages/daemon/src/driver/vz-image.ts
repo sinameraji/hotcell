@@ -35,12 +35,13 @@ export class VzImageCache {
   constructor(private readonly o: VzImageCacheOpts) {}
 
   /** Resolve an OCI image to a VZ-bootable rootfs path, converting on cache miss. */
-  async ensureRootfs(image: string): Promise<string> {
+  async ensureRootfs(image: string, onProgress?: (phase: string) => void): Promise<string> {
     if (SENTINELS.has(image)) return this.o.prebuiltRootfs;
     const out = join(this.o.cacheDir, `${this.sanitize(image)}.img`);
     if (existsSync(out)) return out;
     return this.once(out, async () => {
       mkdirSync(this.o.cacheDir, { recursive: true });
+      onProgress?.(`converting ${image} → rootfs (first run, cached after)`);
       log.info("converting OCI image to a VZ rootfs (first use; cached after)", { image, out });
       await this.run(join(this.o.vzDir, "convert-image.sh"), [
         image,
@@ -54,12 +55,13 @@ export class VzImageCache {
   }
 
   /** Path to a blank pre-formatted workspace image of `diskGb`, building on miss. */
-  async ensureBlankWorkspace(diskGb: number): Promise<string> {
+  async ensureBlankWorkspace(diskGb: number, onProgress?: (phase: string) => void): Promise<string> {
     const sizeMb = Math.max(64, Math.round(diskGb * 1024));
     const out = join(this.o.cacheDir, `blank-${sizeMb}m.img`);
     if (existsSync(out)) return out;
     return this.once(out, async () => {
       mkdirSync(this.o.cacheDir, { recursive: true });
+      onProgress?.("preparing workspace disk (first run, cached after)");
       log.info("building the blank workspace template (first use; cached after)", { sizeMb, out });
       await this.run(join(this.o.vzDir, "build-blank-workspace.sh"), [out, String(sizeMb), this.platform]);
       return out;
