@@ -12,7 +12,12 @@
 set -euo pipefail
 IMAGE="$1"; OUT="$2"; AGENT="$3"; INIT="$4"; PLATFORM="${5:-linux/arm64}"
 
-WORK="$(mktemp -d)"
+# Keep the scratch dir under $OUT's directory (~/.hotcell/vz/images → /Users), which
+# is inside Docker Desktop's default file-sharing. mktemp's default ($TMPDIR →
+# /var/folders) isn't shared on some Docker setups, so the `-v "$WORK:/work"` mount
+# below comes up empty and the in-container `cp /work/hotcell-agent …` fails.
+mkdir -p "$(dirname "$OUT")"
+WORK="$(mktemp -d "$(dirname "$OUT")/.convert.XXXXXX")"
 trap 'rm -rf "$WORK"; [ -n "${CID:-}" ] && docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 cp "$AGENT" "$WORK/hotcell-agent"
 cp "$INIT" "$WORK/init"
