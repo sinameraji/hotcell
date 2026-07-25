@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,5 +82,46 @@ async function verifyChecksum(bin: Buffer, shaUrl: string): Promise<void> {
 function dequarantine(path: string): Promise<void> {
   return new Promise((resolve) => {
     execFile("xattr", ["-d", "com.apple.quarantine", path], () => resolve());
+  });
+}
+
+/**
+ * Ensure the VZ *guest runtime* (guest kernel + in-guest agent + the converter
+ * shell scripts) is present under `destDir`, downloading and extracting the
+ * release tarball if not. This is what `hotcell run` needs to convert an image
+ * into an ext4 rootfs and boot a microVM — the helper alone only lets the daemon
+ * start and probe. Throws (network-friendly) if the download or checksum fails.
+ */
+export async function fetchVzGuest(destDir: string, version = daemonVersion()): Promise<void> {
+  const base = `${RELEASE_BASE}/v${version}`;
+  const name = "hotcell-vz-guest-arm64.tar.gz";
+  let tgz: Buffer;
+  try {
+    tgz = await download(`${base}/${name}`);
+    await verifyChecksum(tgz, `${base}/${name}.sha256`);
+  } catch (err) {
+    throw new Error(
+      `couldn't download the Apple VZ guest runtime for v${version} (${(err as Error).message})`,
+    );
+  }
+
+  mkdirSync(join(destDir, "guest"), { recursive: true });
+  const tmp = join(destDir, ".guest.tar.gz");
+  writeFileSync(tmp, tgz);
+  await extractTar(tmp, destDir);
+  unlinkSync(tmp);
+  // The scripts + agent must be executable; the kernel is read by the helper.
+  for (const rel of ["convert-image.sh", "build-blank-workspace.sh", "guest/init.sh", "guest/hotcell-agent"]) {
+    try {
+      chmodSync(join(destDir, rel), 0o755);
+    } catch {
+      /* a missing optional file just stays as shipped */
+    }
+  }
+}
+
+function extractTar(tarball: string, destDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("tar", ["xzf", tarball, "-C", destDir], (err) => (err ? reject(err) : resolve()));
   });
 }

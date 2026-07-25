@@ -80,3 +80,37 @@ jobs:
           files: |
             helpers/hotcell-vz/dist/hotcell-vz
             helpers/hotcell-vz/dist/hotcell-vz.sha256
+
+  # Build the guest runtime (kernel + in-guest agent) on a native arm64 Linux
+  # runner and attach it — with the converter scripts — as one tarball the daemon
+  # fetches on first `hotcell run` (driver/vz-fetch.ts fetchVzGuest). The kernel is
+  # a ~15-30 min compile in an arm64 Docker container (build-kernel.sh). Independent
+  # of the npm/PyPI jobs — a guest build failure never blocks package publishing.
+  guest-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - name: build guest kernel (arm64) + in-guest agent
+        run: |
+          bash helpers/hotcell-vz/build-kernel.sh
+          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -o ../helpers/hotcell-vz/guest/hotcell-agent ./cmd/hotcell-agent)
+      - name: assemble + checksum the guest tarball
+        run: |
+          cd helpers/hotcell-vz
+          tar czf hotcell-vz-guest-arm64.tar.gz \
+            convert-image.sh build-blank-workspace.sh \
+            guest/init.sh guest/hotcell-agent guest/vmlinux-vz
+          shasum -a 256 hotcell-vz-guest-arm64.tar.gz > hotcell-vz-guest-arm64.tar.gz.sha256
+      - name: attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            helpers/hotcell-vz/hotcell-vz-guest-arm64.tar.gz
+            helpers/hotcell-vz/hotcell-vz-guest-arm64.tar.gz.sha256
