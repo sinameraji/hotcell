@@ -19,7 +19,7 @@ import { VzImageCache } from "./vz-image.js";
 import { createHash } from "node:crypto";
 import type { CreateOptions, HostInfo, ResourceLimits } from "./types.js";
 import { RUNNING_FROM_SOURCE } from "../config.js";
-import { fetchVzHelper } from "./vz-fetch.js";
+import { fetchVzGuest, fetchVzHelper } from "./vz-fetch.js";
 import { log } from "../logger.js";
 
 /** Config the driver factory hands the VZ driver (subset of the daemon config). */
@@ -102,15 +102,21 @@ export class AppleVzDriver extends AgentDriver {
    * in `~/.hotcell/vz/` by `ensureHelper()` when the configured one is absent.
    */
   private helperBin: string;
+  private kernelPath: string;
 
   constructor(private readonly cfg: VzConfig) {
     super();
-    this.helperBin = cfg.helperPath;
-    // `helpers/hotcell-vz` holds the converter scripts + staged guest files, two dirs
-    // up from the helper binary (helpers/hotcell-vz/dist/hotcell-vz).
-    const vzDir = dirname(dirname(cfg.helperPath));
+    // Decide where the VZ runtime lives. A full source checkout / prior fetch has
+    // the helper + kernel + converter scripts next to the configured helper
+    // (helpers/hotcell-vz/…); otherwise (the npm-install case) they're fetched into
+    // the state dir on first use — `ensureHelper()` grabs the binary, `ensureGuest()`
+    // the kernel + agent + scripts — and everything resolves under one writable dir.
+    const useConfigured = existsSync(cfg.helperPath) && existsSync(cfg.kernel);
+    const runtimeDir = useConfigured ? dirname(dirname(cfg.helperPath)) : cfg.stateDir;
+    this.helperBin = useConfigured ? cfg.helperPath : join(cfg.stateDir, "hotcell-vz");
+    this.kernelPath = useConfigured ? cfg.kernel : join(cfg.stateDir, "guest", "vmlinux-vz");
     this.images = new VzImageCache({
-      vzDir,
+      vzDir: runtimeDir,
       cacheDir: cfg.imageCacheDir,
       prebuiltRootfs: cfg.rootfs,
     });
@@ -153,6 +159,11 @@ export class AppleVzDriver extends AgentDriver {
   private async launch(opts: CreateOptions): Promise<void> {
     const id = opts.id;
     if (this.vms.has(id)) return; // already running
+
+    // Booting needs the helper + the guest runtime (kernel/agent/scripts); fetch
+    // them on demand in the npm-install case before the first VM comes up.
+    await this.ensureHelper();
+    await this.ensureGuest();
 
     const adopted = await this.tryClaimFromPool(opts);
     if (!adopted) {
@@ -256,7 +267,7 @@ export class AppleVzDriver extends AgentDriver {
     const pidsMax = p.limits?.pidsLimit && p.limits.pidsLimit > 0 ? p.limits.pidsLimit : 0;
     try {
       await helper.rpc("start", {
-        kernel: this.cfg.kernel,
+        kernel: this.kernelPath,
         rootfs,
         workspace: workspaceImg,
         cpus,
@@ -554,6 +565,33 @@ export class AppleVzDriver extends AgentDriver {
       throw new Error(
         `Couldn't get the Apple VZ helper (${(err as Error).message}). Check your connection and retry, ` +
           `or use Docker for now: run 'hotcell setup' and choose containers (or set HOTCELL_DRIVER=container).`,
+      );
+    }
+  }
+
+  /**
+   * Make sure the guest runtime (kernel + agent + converter scripts) is present,
+   * fetching it into the state dir on first `create` in the npm-install case. The
+   * helper alone lets the daemon start + probe; booting a VM needs these too.
+   */
+  private async ensureGuest(): Promise<void> {
+    if (existsSync(this.kernelPath)) return;
+    try {
+      await fetchVzGuest(this.cfg.stateDir);
+      log.info("fetched the Apple VZ guest runtime (kernel + agent + converter)", {
+        dir: this.cfg.stateDir,
+      });
+    } catch (err) {
+      if (RUNNING_FROM_SOURCE) {
+        throw new Error(
+          `The Apple VZ guest runtime (kernel + agent) isn't built yet. Build it with ` +
+            `'npm run build:vz && bash helpers/hotcell-vz/build-kernel.sh && npm run build:agent'. ` +
+            `(${(err as Error).message})`,
+        );
+      }
+      throw new Error(
+        `Couldn't get the Apple VZ guest runtime (${(err as Error).message}). Check your connection ` +
+          `and retry, or use Docker for now (HOTCELL_DRIVER=container).`,
       );
     }
   }
