@@ -54,3 +54,29 @@ jobs:
           npm publish -w @hotcell/daemon --access public --provenance
           npm publish -w hotcell --provenance
           npm publish -w @hotcell/mastra --access public --provenance
+
+  # Build the ad-hoc code-signed Apple VZ helper on a macOS/arm64 runner and
+  # attach it to the GitHub release, so `npm i -g hotcell` on an Apple-Silicon Mac
+  # fetches it on first use (driver/vz-fetch.ts). Ad-hoc signing carries the
+  # virtualization entitlement and needs no Apple Developer account. Independent of
+  # the npm/PyPI jobs — a helper build failure never blocks package publishing.
+  helper-macos:
+    runs-on: macos-14
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release + upload assets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: build + ad-hoc-sign the VZ helper
+        run: npm run build:vz
+      - name: checksum
+        run: cd helpers/hotcell-vz/dist && shasum -a 256 hotcell-vz > hotcell-vz.sha256
+      - name: attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            helpers/hotcell-vz/dist/hotcell-vz
+            helpers/hotcell-vz/dist/hotcell-vz.sha256

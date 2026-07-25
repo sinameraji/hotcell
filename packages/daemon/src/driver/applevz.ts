@@ -19,6 +19,7 @@ import { VzImageCache } from "./vz-image.js";
 import { createHash } from "node:crypto";
 import type { CreateOptions, HostInfo, ResourceLimits } from "./types.js";
 import { RUNNING_FROM_SOURCE } from "../config.js";
+import { fetchVzHelper } from "./vz-fetch.js";
 import { log } from "../logger.js";
 
 /** Config the driver factory hands the VZ driver (subset of the daemon config). */
@@ -95,8 +96,16 @@ export class AppleVzDriver extends AgentDriver {
    *  other's live relay. Derived from stateDir; kept short for sun_path. */
   private readonly poolTok: string;
 
+  /**
+   * Path to the helper binary actually used. Starts at the configured path (a
+   * source checkout / explicit override) and is redirected to the fetched copy
+   * in `~/.hotcell/vz/` by `ensureHelper()` when the configured one is absent.
+   */
+  private helperBin: string;
+
   constructor(private readonly cfg: VzConfig) {
     super();
+    this.helperBin = cfg.helperPath;
     // `helpers/hotcell-vz` holds the converter scripts + staged guest files, two dirs
     // up from the helper binary (helpers/hotcell-vz/dist/hotcell-vz).
     const vzDir = dirname(dirname(cfg.helperPath));
@@ -236,7 +245,7 @@ export class AppleVzDriver extends AgentDriver {
       /* not there */
     }
 
-    const helper = new HelperProcess(this.cfg.helperPath, join(p.stateDir, "console.log"));
+    const helper = new HelperProcess(this.helperBin, join(p.stateDir, "console.log"));
     const vm: VmState = { helper, socketPath: p.socketPath, workspaceImg, stateDir: p.stateDir };
 
     // Memory + CPU are hard VM caps (VZ memorySize/cpuCount). VZ needs an integer
@@ -525,25 +534,43 @@ export class AppleVzDriver extends AgentDriver {
 
   // --- host probes (one-shot helper, no VM) ---------------------------------
 
+  /**
+   * Make sure a runnable helper exists. A source checkout / explicit
+   * `HOTCELL_VZ_HELPER_PATH` is used as-is; otherwise (the npm-install case) fetch
+   * the ad-hoc-signed helper from the matching GitHub release into `~/.hotcell/vz/`.
+   */
+  private async ensureHelper(): Promise<void> {
+    if (existsSync(this.helperBin)) return;
+    try {
+      this.helperBin = await fetchVzHelper(this.cfg.stateDir);
+      log.info("fetched the Apple VZ helper", { path: this.helperBin });
+    } catch (err) {
+      if (RUNNING_FROM_SOURCE) {
+        throw new Error(
+          `The Apple VZ helper (hotcell-vz) isn't built yet. Build it with 'npm run build:vz', ` +
+            `then run 'hotcell start' again. (${(err as Error).message})`,
+        );
+      }
+      throw new Error(
+        `Couldn't get the Apple VZ helper (${(err as Error).message}). Check your connection and retry, ` +
+          `or use Docker for now: run 'hotcell setup' and choose containers (or set HOTCELL_DRIVER=container).`,
+      );
+    }
+  }
+
   async ping(): Promise<void> {
+    await this.ensureHelper();
     let res: HelperOneShot;
     try {
       res = await this.oneShot("probe");
     } catch (err) {
-      // Installed users don't have the repo (the helper isn't shipped in the npm
-      // package), so a "build it" hint is useless — steer them to Docker. Only a
-      // source checkout can actually build the helper.
-      if (!RUNNING_FROM_SOURCE) {
-        throw new Error(
-          `The Apple VZ driver isn't available in this install — its helper (hotcell-vz) isn't bundled. ` +
-            `Use the Docker driver instead: run 'hotcell setup' and choose containers ` +
-            `(or set HOTCELL_DRIVER=container).`,
-        );
-      }
+      // Helper is present but wouldn't run — e.g. macOS blocked a downloaded
+      // binary, or the build is broken. Surface the real error for diagnosis.
       throw new Error(
-        `The Apple VZ helper (hotcell-vz) isn't built yet — it's missing at "${this.cfg.helperPath}". ` +
-          `Build it with 'npm run build:vz', then run 'hotcell start' again. ` +
-          `(underlying: ${(err as Error).message})`,
+        `The Apple VZ helper is present but wouldn't run: ${(err as Error).message}. ` +
+          (RUNNING_FROM_SOURCE
+            ? `Try rebuilding it with 'npm run build:vz'.`
+            : `Please report this, or use Docker: run 'hotcell setup' and choose containers.`),
       );
     }
     const r = res.result as { available?: boolean; reason?: string } | undefined;
@@ -566,7 +593,7 @@ export class AppleVzDriver extends AgentDriver {
   /** One-shot stdio RPC to a throwaway helper process (probe/hostInfo). */
   private oneShot(method: string): Promise<HelperOneShot> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.cfg.helperPath, [], { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(this.helperBin, [], { stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       let err = "";
       child.stdout.on("data", (d: Buffer) => (out += d.toString()));
