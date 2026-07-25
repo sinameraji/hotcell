@@ -139,7 +139,7 @@ export class AppleVzDriver extends AgentDriver {
   // --- lifecycle ------------------------------------------------------------
 
   async create(opts: CreateOptions): Promise<void> {
-    opts.onProgress?.("booting vm");
+    opts.onProgress?.("starting");
     await this.launch(opts);
     if (opts.setup?.length) opts.onProgress?.("running setup");
     // Best-effort setup commands, mirroring the container driver (non-fatal).
@@ -161,8 +161,11 @@ export class AppleVzDriver extends AgentDriver {
     if (this.vms.has(id)) return; // already running
 
     // Booting needs the helper + the guest runtime (kernel/agent/scripts); fetch
-    // them on demand in the npm-install case before the first VM comes up.
+    // them on demand in the npm-install case before the first VM comes up. Surface
+    // the (slow, one-time) downloads so `hotcell run` doesn't look stuck.
+    if (!existsSync(this.helperBin)) opts.onProgress?.("fetching Apple VZ helper");
     await this.ensureHelper();
+    if (!existsSync(this.kernelPath)) opts.onProgress?.("fetching Apple VZ runtime (kernel + agent)");
     await this.ensureGuest();
 
     const adopted = await this.tryClaimFromPool(opts);
@@ -181,6 +184,7 @@ export class AppleVzDriver extends AgentDriver {
           socketPath: `/tmp/hc-${id}.sock`, // short, fits sun_path
           limits: opts.limits,
           restoreFrom,
+          onProgress: opts.onProgress,
         });
       } catch (err) {
         if (restoreFrom) {
@@ -228,10 +232,11 @@ export class AppleVzDriver extends AgentDriver {
     socketPath: string;
     limits?: CreateOptions["limits"];
     restoreFrom?: string;
+    onProgress?: (phase: string) => void;
   }): Promise<VmState> {
     mkdirSync(p.stateDir, { recursive: true });
     // Resolve the rootfs for the image (sentinels → prebuilt base; else converted).
-    const rootfs = await this.images.ensureRootfs(p.image);
+    const rootfs = await this.images.ensureRootfs(p.image, p.onProgress);
 
     // First boot only: give the VM its own workspace disk. Prefer cloning the blank
     // pre-formatted template (works for images without mkfs.ext4); else a sparse
@@ -240,7 +245,7 @@ export class AppleVzDriver extends AgentDriver {
     if (!existsSync(workspaceImg)) {
       let blank: string | null = null;
       try {
-        blank = await this.images.ensureBlankWorkspace(this.cfg.diskGb);
+        blank = await this.images.ensureBlankWorkspace(this.cfg.diskGb, p.onProgress);
       } catch (err) {
         log.warn("blank workspace build failed; guest will format a sparse disk", {
           sandbox: p.id,
@@ -256,6 +261,7 @@ export class AppleVzDriver extends AgentDriver {
       /* not there */
     }
 
+    p.onProgress?.(p.restoreFrom ? "resuming microVM" : "booting microVM");
     const helper = new HelperProcess(this.helperBin, join(p.stateDir, "console.log"));
     const vm: VmState = { helper, socketPath: p.socketPath, workspaceImg, stateDir: p.stateDir };
 

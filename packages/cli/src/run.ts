@@ -3,6 +3,7 @@ import { formatError, parseLimitFlags } from "./util.js";
 import type { GlobalArgs } from "./cli.js";
 import { parseEnvPairs } from "./env.js";
 import { injectedEnv } from "./envconfig.js";
+import { startProgress } from "./progress.js";
 
 export async function runCommand(
   positional: string[],
@@ -44,19 +45,39 @@ export async function runCommand(
     return 1;
   }
 
+  // Detached create + live status on TTY stderr, so a slow first run (image
+  // conversion, VZ runtime fetch, microVM boot) shows what it's doing instead of
+  // a silent hang. On a non-TTY stream startProgress is a no-op (output stays clean).
   let sandbox;
+  const progress = startProgress([""]);
   try {
     const hasLimits = memoryMb !== undefined || cpus !== undefined || pidsLimit !== undefined;
-    const opts =
+    const baseOpts =
       image || env || sleepAfter !== undefined || egress || hasLimits || setup || repo ||
       egressSpendCapUsd !== undefined
         ? { image, env, sleepAfter, egress, egressSpendCapUsd, setup, repo, repoRef, memoryMb, cpus, pidsLimit }
-        : undefined;
-    sandbox = await client.getSandbox(undefined, opts);
+        : {};
+    sandbox = await client.getSandbox(undefined, {
+      ...baseOpts,
+      detach: true,
+      onStatus: (status, info) =>
+        progress.update(
+          0,
+          status === "creating"
+            ? info.statusReason
+              ? `creating (${info.statusReason})`
+              : "creating"
+            : status,
+        ),
+    });
+    progress.settle(0, true, "ready");
   } catch (err) {
+    progress.settle(0, false, formatError(err));
+    progress.stop();
     console.error(`Failed to create sandbox: ${formatError(err)}`);
     return 1;
   }
+  progress.stop();
 
   let exitCode = 0;
   try {
