@@ -11,11 +11,12 @@ import { loadKeys } from "./keystore.js";
 import { c, confirm, readKey, select, textInput } from "./prompts.js";
 import { HotcellClient } from "@hotcell/sdk";
 
-// The microVM drivers (Apple VZ / Firecracker) need build artifacts — the VZ
-// helper binary, guest kernel, rootfs — that only exist in a source checkout;
-// they don't ship in the npm package. Detect a checkout by the VZ helper's Swift
-// package at the repo root. When absent (a normal `npm i -g hotcell`), setup
-// offers only the Docker driver, so a user can't select a driver that can't run.
+// Detect a source checkout by the VZ helper's Swift package at the repo root.
+// Since 0.1.18/0.1.19 the Apple VZ runtime (ad-hoc-signed helper + guest kernel
+// + agent + converter scripts) is fetched from the matching GitHub release on
+// first use, so npm installs can run VZ too — the checkout detection now only
+// gates Firecracker (whose artifacts still exist only in a source checkout) and
+// softens the VZ hint (npm installs still need Docker for OCI→ext4 conversion).
 const RUNNING_FROM_SOURCE = existsSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "helpers", "hotcell-vz", "Package.swift"),
 );
@@ -186,8 +187,13 @@ async function customize(): Promise<{ values: Record<string, string>; generatedK
   const isoOptions = mac
     ? [
         { label: "containers (Docker)", hint: "recommended — needs Docker Desktop/colima" },
-        ...(RUNNING_FROM_SOURCE
-          ? [{ label: "Apple VZ microVMs", hint: "VM-grade isolation, no NIC by default" }]
+        ...(RUNNING_FROM_SOURCE || process.arch === "arm64"
+          ? [{
+              label: "Apple VZ microVMs",
+              hint: RUNNING_FROM_SOURCE
+                ? "VM-grade isolation, no NIC by default"
+                : "VM-grade isolation — runtime fetched on first run; image conversion still needs Docker",
+            }]
           : []),
       ]
     : [
