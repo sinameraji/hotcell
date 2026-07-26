@@ -300,6 +300,17 @@ function egressEnv(config: Config, token: string, advertiseHost?: string): Recor
 }
 
 /**
+ * Whether a sandbox should get `HTTP(S)_PROXY` pointed at the gateway. Always
+ * under enforcement; also for egress-wired sandboxes on the microVM drivers,
+ * whose guests have no NIC — they are default-deny by construction, so without
+ * the proxy env even allowlisted traffic (npm/pip/git through the gateway's
+ * forward proxy) dies on DNS before it can reach the loopback→vsock relay.
+ */
+export function proxyEnvWanted(driverName: string, wantEgress: boolean, enforce: boolean): boolean {
+  return enforce || (wantEgress && driverName !== "container");
+}
+
+/**
  * Forward-proxy env for a sandbox under egress enforcement: point `HTTP(S)_PROXY`
  * at the gateway (the token is the proxy credential), and exclude the gateway host
  * + loopback via `NO_PROXY` so the sandbox's own LLM base-URL calls (which target
@@ -922,7 +933,8 @@ async function createSandbox(
     // so their env points at localhost instead of the gateway's host address.
     const advertiseHost = driverName !== "container" ? "127.0.0.1" : undefined;
     if (wantEgress) env = { ...env, ...egressEnv(config, egressToken, advertiseHost) };
-    if (config.egressEnforce) env = { ...env, ...proxyEnv(config, egressToken, advertiseHost) };
+    if (proxyEnvWanted(driverName, wantEgress, config.egressEnforce))
+      env = { ...env, ...proxyEnv(config, egressToken, advertiseHost) };
 
     // Keyless git out of the box: egress wired + a GitHub repo + a `github`
     // provider key on the host → point the clone's origin at the gateway's

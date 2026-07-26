@@ -10,6 +10,7 @@ import { createServer, request as httpRequest } from "node:http";
 import { createServer as netCreateServer } from "node:net";
 import assert from "node:assert/strict";
 import { buildProviders, createEgressProxy } from "./proxy/egress.js";
+import { proxyEnvWanted } from "./api/server.js";
 import { Allowlist } from "./proxy/allowlist.js";
 import { DEFAULT_MODEL_PRICES } from "./pricing.js";
 import { loadConfig } from "./config.js";
@@ -224,6 +225,21 @@ async function main(): Promise<void> {
     assert.equal(al.check("dns.google").allow, false, "denylist wins");
     assert.equal(al.check("pypi.org:443").allow, true, "port stripped");
     ok("allowlist matcher: exact, wildcard, denylist, port-strip");
+  }
+
+  // 11b) Proxy-env injection policy (pure): enforcement always wins; egress-wired
+  //      microVM sandboxes get it too (NIC-less guests are default-deny by
+  //      construction — without HTTP(S)_PROXY at the loopback relay, allowlisted
+  //      npm/pip/git traffic dies on DNS); plain container sandboxes keep the
+  //      old opt-in-via-enforcement behavior.
+  {
+    assert.equal(proxyEnvWanted("container", true, false), false, "container, no enforce: no proxy env");
+    assert.equal(proxyEnvWanted("container", true, true), true, "enforcement always injects");
+    assert.equal(proxyEnvWanted("applevz", true, false), true, "egress-wired applevz injects");
+    assert.equal(proxyEnvWanted("firecracker", true, false), true, "egress-wired firecracker injects");
+    assert.equal(proxyEnvWanted("applevz", false, false), false, "no egress, no enforce: nothing");
+    assert.equal(proxyEnvWanted("applevz", false, true), true, "enforcement injects even without egress flag");
+    ok("proxy-env policy: enforce always; egress-wired microVM drivers too");
   }
 
   // 12) Forward proxy + CONNECT tunnel + provider-domain guard (custom allowlist
