@@ -40,6 +40,9 @@ export const DEFAULT_ALLOWLIST: AllowlistData = {
       "files.pythonhosted.org",
       // Node
       "registry.npmjs.org",
+      // OpenCode (--opencode wiring): the harness fetches provider/model
+      // metadata from models.dev at startup and hangs hard without it.
+      "models.dev",
       // Rust
       "crates.io",
       "static.crates.io",
