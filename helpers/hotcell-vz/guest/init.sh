@@ -20,6 +20,15 @@ mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null  # PTYs (termin
 mkdir -p /var/tmp 2>/dev/null
 for d in /tmp /run /var/tmp; do mount -t tmpfs tmpfs "$d" 2>/dev/null; done
 
+# Exec env parity with `docker exec`: the kernel boots PID 1 with HOME=/ and a
+# bare PATH, and the agent (and everything it execs) inherits this env — so
+# tools that write under $HOME (npm, pip, git) fail on the RO rootfs. Give root
+# a writable home (tmpfs — transient across stop/start, same posture as /tmp)
+# and a sane PATH. Fall back to /tmp for images that ship no /root at all.
+mkdir -p /root 2>/dev/null
+if mount -t tmpfs tmpfs /root 2>/dev/null; then export HOME=/root; else export HOME=/tmp; fi
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
 # Loopback up so 127.0.0.1 (waitForPort, preview bridge to local servers) routes.
 ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true
 
