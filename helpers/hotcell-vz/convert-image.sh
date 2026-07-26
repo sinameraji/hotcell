@@ -57,6 +57,12 @@ docker run --rm --platform "$PLATFORM" -v "$WORK:/work" alpine:3.20 sh -c '
   mkdir -p /rootfs/usr/local/bin
   cp /work/node-gyp /rootfs/usr/local/bin/node-gyp
   chmod +x /rootfs/init /rootfs/sbin/hotcell-agent /rootfs/usr/local/bin/node-gyp
+  # Login shells (`bash -lc`, the agent exec shape) source /etc/profile, which
+  # on Debian/Alpine RESETS PATH — dropping init'\''s workspace-prefix entry. A
+  # profile.d file runs after that reset and restores it, so npm-prefix installs
+  # on the RO-rootfs drivers stay reachable in every exec.
+  mkdir -p /rootfs/etc/profile.d
+  printf '\''export PATH="$PATH:/workspace/.npm-global/bin"\n'\'' > /rootfs/etc/profile.d/zz-hotcell-path.sh
   SIZE_MB=$(( $(du -sm /rootfs | cut -f1) + 96 ))   # image contents + headroom
   rm -f /work/out.img
   mkfs.ext4 -q -F -L sbxroot -d /rootfs /work/out.img "${SIZE_MB}M"

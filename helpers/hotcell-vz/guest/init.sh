@@ -28,6 +28,9 @@ for d in /tmp /run /var/tmp; do mount -t tmpfs tmpfs "$d" 2>/dev/null; done
 mkdir -p /root 2>/dev/null
 if mount -t tmpfs tmpfs /root 2>/dev/null; then export HOME=/root; else export HOME=/tmp; fi
 export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+# Tools that can't install globally on the RO rootfs (npm -g) fall back to a
+# prefix on the writable workspace disk — keep its bin dir reachable.
+export PATH="$PATH:/workspace/.npm-global/bin"
 
 # Loopback up so 127.0.0.1 (waitForPort, preview bridge to local servers) routes.
 ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true

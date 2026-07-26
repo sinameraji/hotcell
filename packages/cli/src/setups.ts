@@ -6,11 +6,17 @@
  */
 
 // Verified OpenCode wiring (same as examples/agents.sh): install, then point its
-// openrouter provider at the egress gateway env the daemon injects.
+// openrouter provider at the egress gateway env the daemon injects. Global
+// install first; on the microVM drivers /usr lives on the shared read-only
+// rootfs, so fall back to a prefix on the writable workspace disk (init.sh puts
+// /workspace/.npm-global/bin on PATH). Config lands in ~/.config (transient on
+// VZ, where /root is tmpfs) AND /workspace/opencode.json (project-scoped,
+// survives stop/start on the persistent workspace disk).
 export const OPENCODE_SETUP =
-  `npm i -g opencode-ai >/dev/null 2>&1 && mkdir -p ~/.config/opencode && ` +
+  `(npm i -g opencode-ai >/dev/null 2>&1 || npm i -g --prefix /workspace/.npm-global opencode-ai >/dev/null 2>&1) && ` +
+  `mkdir -p ~/.config/opencode && ` +
   `printf '{"provider":{"openrouter":{"options":{"baseURL":"%s/v1","apiKey":"%s"}}}}' ` +
-  `"$OPENROUTER_BASE_URL" "$OPENROUTER_API_KEY" > ~/.config/opencode/opencode.json`;
+  `"$OPENROUTER_BASE_URL" "$OPENROUTER_API_KEY" | tee ~/.config/opencode/opencode.json > /workspace/opencode.json`;
 
 /** Whether an image (undefined = the node-capable default) can run `npm i -g`. */
 export function nodeCapableImage(image: string | undefined): boolean {

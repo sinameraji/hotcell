@@ -41,6 +41,10 @@ docker run --rm --platform "linux/${ARCH}" -v "$PWD/guest:/guest" alpine:3.20 sh
   cp /guest/hotcell-agent /rootfs/sbin/hotcell-agent
   cp /guest/init.sh /rootfs/init
   chmod +x /rootfs/init /rootfs/sbin/hotcell-agent
+  # Login shells reset PATH via /etc/profile — restore the workspace npm prefix
+  # (see convert-image.sh for the full story).
+  mkdir -p /rootfs/etc/profile.d
+  printf '\''export PATH="$PATH:/workspace/.npm-global/bin"\n'\'' > /rootfs/etc/profile.d/zz-hotcell-path.sh
   rm -f /guest/rootfs.img
   mkfs.ext4 -q -F -L sbxroot -d /rootfs /guest/rootfs.img 256M
 '
