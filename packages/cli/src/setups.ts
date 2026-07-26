@@ -16,7 +16,13 @@ export const OPENCODE_SETUP =
   `(npm i -g opencode-ai >/dev/null 2>&1 || npm i -g --prefix /workspace/.npm-global opencode-ai >/dev/null 2>&1) && ` +
   `mkdir -p ~/.config/opencode && ` +
   `printf '{"provider":{"openrouter":{"options":{"baseURL":"%s/v1","apiKey":"%s"}}}}' ` +
-  `"$OPENROUTER_BASE_URL" "$OPENROUTER_API_KEY" | tee ~/.config/opencode/opencode.json > /workspace/opencode.json`;
+  `"$OPENROUTER_BASE_URL" "$OPENROUTER_API_KEY" | tee ~/.config/opencode/opencode.json > /workspace/opencode.json && ` +
+  // Pre-seed opencode's models.dev snapshot through the gateway (curl honors
+  // HTTP(S)_PROXY; opencode's own runtime fetch does not, and stalls hard on
+  // NIC-less microVM guests when the cache is cold). Best-effort: a miss just
+  // means opencode fetches for itself where it can.
+  `{ mkdir -p "\${XDG_CACHE_HOME:-$HOME/.cache}/opencode" && ` +
+  `curl -fsSL -m 30 https://models.dev/api.json -o "\${XDG_CACHE_HOME:-$HOME/.cache}/opencode/models.json" || true; }`;
 
 /** Whether an image (undefined = the node-capable default) can run `npm i -g`. */
 export function nodeCapableImage(image: string | undefined): boolean {
