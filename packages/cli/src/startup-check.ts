@@ -51,7 +51,9 @@ function json(level: string, msg: string, fields: Record<string, unknown> = {}):
 // The real driver-preflight messages the daemon produces (see the driver ping()s).
 const DOCKER_MSG =
   "You need to start Docker first — launch Docker Desktop (or colima, or Apple 'container'), " +
-  "then run 'hotcell start' again. (underlying: connect ENOENT /var/run/docker.sock)";
+  "then run 'hotcell start' again. Already running on a non-default socket (colima, OrbStack, podman)? " +
+  "Point hotcell at it first: export DOCKER_HOST=unix://~/.colima/default/docker.sock " +
+  "(hotcell reads DOCKER_HOST, not the docker CLI's context). (underlying: connect ENOENT /var/run/docker.sock)";
 // NB: this one embeds double quotes around the helper path — the escaping torture test.
 const VZ_MSG =
   'The Apple VZ helper (hotcell-vz) isn\'t built yet — it\'s missing at "/opt/hotcell-vz". ' +
