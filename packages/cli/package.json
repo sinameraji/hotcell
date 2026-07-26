@@ -1,6 +1,6 @@
 {
   "name": "hotcell",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Sandboxes for AI agents, on your own hardware — CLI + daemon for the hotcell sandbox platform",
   "license": "Apache-2.0",
   "type": "module",
