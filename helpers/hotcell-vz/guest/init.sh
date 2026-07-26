@@ -64,5 +64,10 @@ if [ -b /dev/vdb ]; then
   mount /dev/vdb /workspace 2>/dev/null || { mkfs.ext4 -q -F /dev/vdb 2>/dev/null && mount /dev/vdb /workspace; }
 fi
 
+# Caches on the persistent workspace disk: $HOME is tmpfs here, so anything
+# XDG-cached (opencode's models.dev snapshot, pip, npm) would vanish on every
+# stop/start — and NIC-less guests can't cheaply re-fetch what they lose.
+export XDG_CACHE_HOME=/workspace/.cache
+
 echo hotcell-guest-init-ok
 exec /sbin/hotcell-agent
