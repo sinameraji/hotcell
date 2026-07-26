@@ -14,6 +14,10 @@ npm i -g hotcell
 hotcell            # first run: 30-second guided setup — then your live fleet
 ```
 
+> Docker runtime on a non-default socket (colima, OrbStack, podman)? hotcell reads
+> `DOCKER_HOST`, not the docker CLI's context — e.g. for colima:
+> `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` before `hotcell start`.
+
 <p align="center">
   <img src="docs/media/tui-fleet.png" width="820" alt="hotcell fleet — five sandboxes running at full CPU with live memory and cost per cell" />
 </p>

@@ -79,7 +79,9 @@ export class ContainerDriver implements Driver {
     } catch (err) {
       throw new Error(
         `You need to start Docker first — launch Docker Desktop (or colima, or Apple 'container'), ` +
-          `then run 'hotcell start' again. (underlying: ${(err as Error).message})`,
+          `then run 'hotcell start' again. Already running on a non-default socket (colima, OrbStack, podman)? ` +
+          `Point hotcell at it first: export DOCKER_HOST=unix://~/.colima/default/docker.sock ` +
+          `(hotcell reads DOCKER_HOST, not the docker CLI's context). (underlying: ${(err as Error).message})`,
       );
     }
   }
