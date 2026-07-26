@@ -118,7 +118,9 @@ export class AppleVzDriver extends AgentDriver {
     this.images = new VzImageCache({
       vzDir: runtimeDir,
       cacheDir: cfg.imageCacheDir,
-      prebuiltRootfs: cfg.rootfs,
+      // npm-install case: like the helper + kernel, the prebuilt rootfs (when the
+      // release ships one) lands in the fetched guest dir, not node_modules.
+      prebuiltRootfs: useConfigured ? cfg.rootfs : join(cfg.stateDir, "guest", "rootfs.img"),
     });
     this.poolTarget = Math.max(0, cfg.warmPool ?? 0);
     this.poolImage = cfg.poolImage ?? "base";

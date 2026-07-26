@@ -36,7 +36,18 @@ export class VzImageCache {
 
   /** Resolve an OCI image to a VZ-bootable rootfs path, converting on cache miss. */
   async ensureRootfs(image: string, onProgress?: (phase: string) => void): Promise<string> {
-    if (SENTINELS.has(image)) return this.o.prebuiltRootfs;
+    if (SENTINELS.has(image)) {
+      // Honest failure beats handing the helper a nonexistent path: npm installs
+      // fetch the helper + kernel on demand, but the release tarball may not ship
+      // a prebuilt rootfs — steer to the OCI-conversion path (or a source build).
+      if (!existsSync(this.o.prebuiltRootfs))
+        throw new Error(
+          `the prebuilt "${image}" rootfs isn't available in this install (missing at ${this.o.prebuiltRootfs}) — ` +
+            `use an OCI image instead (e.g. --image ghcr.io/sinameraji/hotcell-base:latest; conversion needs Docker), ` +
+            `or build the guest from a source checkout with 'npm run build:vz'.`,
+        );
+      return this.o.prebuiltRootfs;
+    }
     const out = join(this.o.cacheDir, `${this.sanitize(image)}.img`);
     if (existsSync(out)) return out;
     return this.once(out, async () => {
