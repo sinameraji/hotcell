@@ -46,6 +46,10 @@ jobs:
           registry-url: https://registry.npmjs.org
       # OIDC trusted publishing needs npm >= 11.5; node 22 bundles npm 10.
       - run: npm install -g npm@latest
+      # Guard against v0.1.21's failure mode: versions bumped but the exact
+      # internal pins (cli -> daemon/sdk, mastra -> sdk) left one release behind.
+      - name: lockstep version check
+        run: node scripts/check-release-versions.mjs
       - run: npm ci
       - run: npm run build
       - name: publish (dependency order, provenance)
