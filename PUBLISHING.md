@@ -34,9 +34,16 @@ Version bump across all four packages (keep them in lockstep):
 
 ```bash
 npm version 0.1.0 --workspaces --no-git-tag-version   # or the next version
-# then update the two internal dep ranges if the major changed
+# npm does NOT rewrite the internal dep pins (cli -> daemon/sdk, mastra -> sdk,
+# daemon devDep -> sdk). They are EXACT versions — update them to the new
+# version on EVERY bump, then verify:
+npm run check:versions            # release.yml runs this too, before publishing
+npm install                       # sync package-lock.json
 git commit -am "release: v0.1.0" && git push
 ```
+
+(v0.1.21 shipped with the CLI pinned to `@hotcell/daemon@0.1.20` because this
+step was skipped — `check:versions` now fails the publish job if pins drift.)
 
 ## 2. Publish (dependency order)
 
