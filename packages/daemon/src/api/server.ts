@@ -1475,6 +1475,10 @@ async function execInSandbox(
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
+  // The stream is live work: the reaper must see this sandbox as active for
+  // the whole run, not just the instant the request arrived.
+  store.beginExec(id);
+  const stopKeepalive = startSseKeepalive(res);
   try {
     await driver.exec(id, runCommand, { cwd, env }, write);
     if (session && cwdFile) {
@@ -1492,8 +1496,29 @@ async function execInSandbox(
     write({ type: "stderr", data: String(err) });
     write({ type: "exit", exitCode: 1 });
   } finally {
+    stopKeepalive();
+    store.endExec(id);
     res.end();
   }
+}
+
+/**
+ * Emit an SSE comment frame on a quiet interval for the life of a stream.
+ *
+ * An agent inside a sandbox can legitimately produce NOTHING on an exec stream
+ * for many minutes (a model thinking between tool calls, a subagent doing the
+ * work while the parent waits). HTTP clients infer death from that silence —
+ * undici's default fetch kills a body after 5 quiet minutes ("Body Timeout
+ * Error"), and it cost a consumer a complete 75-minute run at its final verify
+ * step. Comment frames are ignored by every SSE parser but keep bytes flowing,
+ * so no client-side timeout policy ever sees silence on a healthy stream.
+ */
+function startSseKeepalive(res: ServerResponse, intervalMs = 15_000): () => void {
+  const timer = setInterval(() => {
+    res.write(": hb\n\n");
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 async function watchFiles(
@@ -1519,6 +1544,7 @@ async function watchFiles(
   const controller = new AbortController();
   req.on("close", () => controller.abort());
 
+  const stopKeepalive = startSseKeepalive(res);
   try {
     await driver.watchFiles(
       id,
@@ -1529,6 +1555,7 @@ async function watchFiles(
   } catch (err) {
     res.write(`data: ${JSON.stringify({ type: "error", error: String(err) })}\n\n`);
   } finally {
+    stopKeepalive();
     res.end();
   }
 }
@@ -1685,6 +1712,7 @@ async function streamLogs(
   const controller = new AbortController();
   req.on("close", () => controller.abort());
 
+  const stopKeepalive = startSseKeepalive(res);
   try {
     await driver.streamProcessLogs(
       id,
@@ -1695,6 +1723,7 @@ async function streamLogs(
   } catch (err) {
     res.write(`data: ${JSON.stringify({ type: "log", data: errorMessage(err) })}\n\n`);
   } finally {
+    stopKeepalive();
     res.write(`data: ${JSON.stringify({ type: "end" })}\n\n`);
     res.end();
   }
