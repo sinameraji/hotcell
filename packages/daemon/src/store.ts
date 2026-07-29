@@ -75,6 +75,9 @@ export class SandboxStore {
   // egress token -> record (sandboxId + policy + spend; O(1) lookup for the egress proxy)
   private egressTokens = new Map<string, EgressTokenRecord>();
 
+  /** sandboxId → open exec streams. Memory-only: streams die with the process. */
+  private liveExecs = new Map<string, number>();
+
   constructor(dbPath = ":memory:") {
     if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
@@ -367,6 +370,31 @@ export class SandboxStore {
     this.db
       .prepare("UPDATE sandboxes SET lastActivityAt = ? WHERE id = ?")
       .run(rec.lastActivityAt, id);
+  }
+
+  // ----- in-flight exec streams (memory-only) -----
+  //
+  // `touch` marks the MOMENT a request arrives, so a long-running exec looks
+  // idle to the reaper while it is still streaming — which once let the reaper
+  // SIGKILL an agent eleven minutes into its work. An open exec stream IS
+  // activity; the reaper must ask, not infer from timestamps.
+
+  /** Mark an exec stream as open on this sandbox. */
+  beginExec(id: string): void {
+    this.liveExecs.set(id, (this.liveExecs.get(id) ?? 0) + 1);
+  }
+
+  /** Mark an exec stream as closed; the idle clock restarts as the work ends. */
+  endExec(id: string): void {
+    const n = (this.liveExecs.get(id) ?? 0) - 1;
+    if (n > 0) this.liveExecs.set(id, n);
+    else this.liveExecs.delete(id);
+    this.touch(id);
+  }
+
+  /** How many exec streams are open on this sandbox right now. */
+  openExecs(id: string): number {
+    return this.liveExecs.get(id) ?? 0;
   }
 
   get(id: string): SandboxRecord | undefined {

@@ -290,11 +290,31 @@ export class ContainerDriver implements Driver {
   async stop(id: string): Promise<void> {
     // Remove the container but keep the workspace volume. With persistence the
     // data survives; without it, stop is effectively a destroy of the rootfs.
-    const container = this.docker.getContainer(this.containerName(id));
+    await this.removeContainerIdempotent(this.containerName(id));
+  }
+
+  /**
+   * Force-remove a container, absorbing every "someone beat us to it" answer:
+   * 404 (already gone) and 409 (a removal is already in progress — the idle
+   * reaper and a client DELETE routinely race here, and surfacing that race as
+   * a 500 once made a client read its own successful run as failed). On 409 we
+   * wait for the winning removal to finish, so callers can safely reclaim
+   * dependent resources like the workspace volume.
+   */
+  private async removeContainerIdempotent(name: string): Promise<void> {
+    const container = this.docker.getContainer(name);
     try {
       await container.remove({ force: true });
     } catch (err: unknown) {
-      if (!isNotFound(err)) throw err;
+      if (isNotFound(err)) return;
+      // We always remove with force, so a 409 can only mean removal-in-progress.
+      if (!isConflict(err)) throw err;
+      try {
+        await container.wait({ condition: "removed" });
+      } catch (waitErr: unknown) {
+        // Vanishing mid-wait is the outcome we wanted.
+        if (!isNotFound(waitErr)) throw waitErr;
+      }
     }
   }
 
@@ -813,13 +833,7 @@ export class ContainerDriver implements Driver {
   }
 
   async destroy(id: string): Promise<void> {
-    const container = this.docker.getContainer(this.containerName(id));
-    try {
-      await container.remove({ force: true });
-    } catch (err: unknown) {
-      // Already gone is fine; rethrow anything else.
-      if (!isNotFound(err)) throw err;
-    }
+    await this.removeContainerIdempotent(this.containerName(id));
     // Drop the persistent volume too — destroy is irreversible.
     try {
       await this.docker.getVolume(this.volumeName(id)).remove({ force: true });

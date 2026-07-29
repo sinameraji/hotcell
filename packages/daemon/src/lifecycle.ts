@@ -114,6 +114,10 @@ export async function reapIdle(
   for (const record of store.list()) {
     if (record.status !== "running") continue;
     if (!record.sleepAfterMs || record.sleepAfterMs <= 0) continue;
+    // An open exec stream is live work, whatever the timestamps say: `touch`
+    // marks request ARRIVAL, so a long agent run looks idle while it is still
+    // streaming — and cold-pausing it means SIGKILLing that work mid-flight.
+    if (store.openExecs(record.id) > 0) continue;
     const hasService = store.listExposed(record.id).length > 0;
     const hasLiveProcs = store.listProcesses(record.id).some((p) => p.status === "running");
     if ((hasService || hasLiveProcs) && !driver.canSnapshot?.(record.id)) continue;
@@ -138,7 +142,20 @@ export function startReaper(opts: {
   intervalMs: number;
 }): NodeJS.Timeout {
   const { driver, store, intervalMs } = opts;
+  let lastTickAt = Date.now();
   const timer = setInterval(() => {
+    const gap = Date.now() - lastTickAt;
+    lastTickAt = Date.now();
+    // A tick arriving far later than scheduled means the host slept — every
+    // sandbox's lastActivityAt is stale through no fault of its owner, whose
+    // own clocks froze with ours. Reaping on that evidence once SIGKILLed a
+    // healthy agent seconds after wake. Sit this cycle out; owners that are
+    // really alive re-beat within one interval, and true orphans are still
+    // reaped on the next tick.
+    if (gap > intervalMs * 2) {
+      log.info("host slept; skipping one reap cycle", { gapMs: gap });
+      return;
+    }
     reapIdle(driver, store)
       .then((ids) => {
         if (ids.length) log.info("auto-paused idle sandboxes", { ids });
