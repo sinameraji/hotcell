@@ -21,6 +21,8 @@
 #   SKIP_BUILD 1 = skip git reset + npm build (box already built); default 0
 #   REGION    label reported in the table (default gcp-n2-nested)
 #   OUTDIR    where raw + summary land (default /tmp/bench-suite)
+#   WARM_POOL_DEPTH  wait for this many ready spares before measuring (default 0)
+#   BENCH_IMAGE image used by the benchmark sandbox (default ubuntu:24.04)
 set +e
 CONFIGS=${CONFIGS:-"24576:8"}
 REPS=${REPS:-3}
@@ -30,6 +32,8 @@ WRITABLE_ROOTFS=${WRITABLE_ROOTFS:-$NETWORKED}  # private rw rootfs; contained e
 SKIP_BUILD=${SKIP_BUILD:-0}
 REGION=${REGION:-gcp-n2-nested}
 OUTDIR=${OUTDIR:-/tmp/bench-suite}
+WARM_POOL_DEPTH=${WARM_POOL_DEPTH:-${HOTCELL_FC_WARM_POOL:-0}}
+BENCH_IMAGE=${BENCH_IMAGE:-ubuntu:24.04}
 mkdir -p "$OUTDIR"
 SUMMARY="$OUTDIR/summary.tsv"
 printf 'mem_mb\tcpus\trep\tresult\tclone_ms\tinstall_ms\ttypecheck_ms\ttotal_ms\tpeak_used_gib\tegress\n' > "$SUMMARY"
@@ -47,8 +51,9 @@ if [ ! -f helpers/hotcell-vz/guest/vmlinux-fc ]; then
   latest=$(curl -s "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/v1.10/x86_64/vmlinux-5.10&list-type=2" | grep -oP "(?<=<Key>)(firecracker-ci/v1.10/x86_64/vmlinux-5\.10\.[0-9]+)(?=</Key>)" | sort -V | tail -1)
   curl -s -o helpers/hotcell-vz/guest/vmlinux-fc "https://s3.amazonaws.com/spec.ccfc.min/$latest"
 fi
-# force one image re-convert so the node-gyp fidelity shim (new) is baked in
-rm -f "$HOME/.hotcell/fc/images/ubuntu_24.04.img" 2>/dev/null
+# Force one Ubuntu image re-convert so the node-gyp fidelity shim is baked in.
+# Custom benchmark images should be rebuilt/invalidated by their image pipeline.
+[ "$BENCH_IMAGE" = "ubuntu:24.04" ] && rm -f "$HOME/.hotcell/fc/images/ubuntu_24.04.img" 2>/dev/null
 NODE=$(command -v node)
 
 LOG "start daemon (egress=$EGRESS)"
@@ -61,6 +66,19 @@ fi
 sudo -E env $ENVX setsid bash -c "$NODE packages/daemon/dist/index.js > /tmp/hotcelld.log 2>&1" </dev/null & disown
 for i in $(seq 1 30); do curl -s --max-time 2 localhost:4750/healthz | grep -q ok && break; sleep 1; done
 LOG "daemon: $(curl -s localhost:4750/healthz)"
+if [ "$WARM_POOL_DEPTH" -gt 0 ] 2>/dev/null; then
+  LOG "waiting for warm pool depth=$WARM_POOL_DEPTH"
+  for i in $(seq 1 180); do
+    POOL=$(curl -s --max-time 2 localhost:4750/capacity | $NODE -e '
+      let d=""; process.stdin.on("data", c => d += c).on("end", () => {
+        try { console.log(Number(JSON.parse(d).pool?.spares ?? 0)); } catch { console.log(0); }
+      });')
+    [ "${POOL:-0}" -ge "$WARM_POOL_DEPTH" ] 2>/dev/null && break
+    sleep 1
+  done
+  POOL=$(curl -s --max-time 2 localhost:4750/capacity)
+  echo "WARM_POOL_READY depth=${WARM_POOL_DEPTH} capacity=${POOL}"
+fi
 
 # stage dax's script + the mem-sampling wrapper once (base64, decoded into each guest)
 PB64=$(curl -fsSL "https://raw.githubusercontent.com/anomalyco/opencode/provider-benchmark/script/provider-benchmark.sh" | base64 -w0)
@@ -85,7 +103,7 @@ classify(){ # raw-file -> RESULT
 # Pre-warm the OCI->rootfs conversion (needs docker), then stop dockerd so its
 # iptables chains don't pollute the measured FC NAT path (perf mode; EGRESS=0 only).
 LOG "pre-warming image conversion (ubuntu:24.04 -> FC rootfs)"
-WRESP=$(curl -s --max-time 180 -X POST localhost:4750/sandboxes -H 'content-type: application/json' -d "{\"image\":\"ubuntu:24.04\",\"driver\":\"firecracker\",\"networked\":${NETWORKED},\"writableRootfs\":${WRITABLE_ROOTFS},\"memoryMb\":2048,\"cpus\":2,\"cpuset\":\"0-1\"}")
+  WRESP=$(curl -s --max-time 180 -X POST localhost:4750/sandboxes -H 'content-type: application/json' -d "{\"image\":\"${BENCH_IMAGE}\",\"driver\":\"firecracker\",\"networked\":${NETWORKED},\"writableRootfs\":${WRITABLE_ROOTFS},\"memoryMb\":2048,\"cpus\":2,\"cpuset\":\"0-1\"}")
 WSB=$(echo "$WRESP" | $NODE -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||"ERR")}catch{console.log("ERR")}})')
 LOG "  warmup sandbox=$WSB"; sleep 2; curl -s -X DELETE "localhost:4750/sandboxes/$WSB" >/dev/null 2>&1
 if [ "$EGRESS" != 1 ] && [ -f "$HOME/.hotcell/fc/images/ubuntu_24.04.img" ]; then
@@ -101,7 +119,7 @@ for cfg in $CONFIGS; do
     LOG "RUN $tag (cpuset=$CPUSET networked=$NETWORKED)"
     {
       echo "### CONFIG mem=${MEM}MB cpus=${CPUS} cpuset=${CPUSET} networked=${NETWORKED} writableRootfs=${WRITABLE_ROOTFS} rep=${REP} egress=${EGRESS} region=${REGION} $(date -u +%FT%TZ)"
-      RESP=$(curl -s --max-time 180 -X POST localhost:4750/sandboxes -H 'content-type: application/json' -d "{\"image\":\"ubuntu:24.04\",\"driver\":\"firecracker\",\"networked\":${NETWORKED},\"writableRootfs\":${WRITABLE_ROOTFS},\"memoryMb\":${MEM},\"cpus\":${CPUS},\"cpuset\":\"${CPUSET}\"}")
+      RESP=$(curl -s --max-time 180 -X POST localhost:4750/sandboxes -H 'content-type: application/json' -d "{\"image\":\"${BENCH_IMAGE}\",\"driver\":\"firecracker\",\"networked\":${NETWORKED},\"writableRootfs\":${WRITABLE_ROOTFS},\"memoryMb\":${MEM},\"cpus\":${CPUS},\"cpuset\":\"${CPUSET}\"}")
       SB=$(echo "$RESP" | $NODE -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||("ERR:"+d))}catch{console.log("ERR:"+d)}})')
       echo "sandbox=$SB"
       if echo "$SB" | grep -qE '^ERR|^$'; then
