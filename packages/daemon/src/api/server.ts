@@ -587,7 +587,10 @@ async function handle(
   // Host capacity + admission status (for the dashboard meter + `sb capacity`).
   if (method === "GET" && path === "/capacity") {
     if (!deps.capacity) return sendJson(res, 200, { enforced: false });
-    return sendJson(res, 200, deps.capacity.snapshot());
+    return sendJson(res, 200, {
+      ...deps.capacity.snapshot(),
+      boot: deps.bootScheduler?.snapshot(),
+    });
   }
 
   // Hot-reload provider keys after `hotcell keys add/rm` — no daemon restart.
@@ -610,7 +613,13 @@ async function handle(
 
   if (method === "POST" && path === "/sandboxes") {
     const body = await readJson(req, config.maxBodyBytes);
-    return createSandbox(res, { config, driver, store, capacity: deps.capacity }, body);
+    return createSandbox(res, {
+      config,
+      driver,
+      store,
+      capacity: deps.capacity,
+      bootScheduler: deps.bootScheduler,
+    }, body);
   }
 
   if (method === "GET" && path === "/sandboxes") {
