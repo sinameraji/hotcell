@@ -60,7 +60,10 @@ NODE=$(command -v node)
 
 LOG "start daemon (egress=$EGRESS)"
 sudo pkill -f "daemon/dist/index" 2>/dev/null; sleep 2
-ENVX="HOTCELL_DRIVER=firecracker HOTCELL_DB=:memory: HOTCELL_FC_KERNEL=helpers/hotcell-vz/guest/vmlinux-fc"
+ENVX="HOTCELL_DRIVER=firecracker HOTCELL_DB=:memory: HOTCELL_FC_KERNEL=helpers/hotcell-vz/guest/vmlinux-fc HOTCELL_IMAGE=${BENCH_IMAGE}"
+if [ "$WARM_POOL_DEPTH" -gt 0 ] 2>/dev/null; then
+  ENVX="$ENVX HOTCELL_FC_WARM_POOL=${WARM_POOL_DEPTH}"
+fi
 if [ "$EGRESS" = 1 ]; then
   ENVX="$ENVX HOTCELL_EGRESS_ENFORCE=true HOTCELL_EGRESS_HOST=0.0.0.0"
   [ -n "$ALLOWLIST_EXTRA" ] && ENVX="$ENVX HOTCELL_ALLOWLIST_EXTRA=$ALLOWLIST_EXTRA"
