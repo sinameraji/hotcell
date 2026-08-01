@@ -2,6 +2,7 @@
 import { get as httpGet } from "node:http";
 import { BackupRegistry } from "./backups.js";
 import { Capacity } from "./capacity.js";
+import { BootScheduler } from "./boot-scheduler.js";
 import { loadConfig, loadProviderConfigs } from "./config.js";
 import { DriverRouter } from "./driver/router.js";
 import { startReaper } from "./lifecycle.js";
@@ -93,6 +94,10 @@ async function main(): Promise<void> {
   // Host capacity for the meter + admission control (best-effort detection).
   const host = await driver.hostInfo().catch(() => null);
   const capacity = new Capacity(store, config, host, history, () => driver.poolStats());
+  const bootScheduler = new BootScheduler(
+    config.microvmBootConcurrency,
+    config.microvmBootQueueTimeoutMs,
+  );
   if (host) {
     log.info("host capacity", {
       memoryMb: host.memoryMb,
@@ -116,7 +121,7 @@ async function main(): Promise<void> {
     return { providers: Object.keys(rebuilt).length };
   };
 
-  const server = createApiServer({ config, driver, store, backups, history, capacity, reloadKeys });
+  const server = createApiServer({ config, driver, store, backups, history, capacity, bootScheduler, reloadKeys });
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") return reportPortInUse(config.host, config.port);
     log.error("daemon failed to start", { error: String(err) });

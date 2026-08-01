@@ -7,6 +7,7 @@ import { kernelFor, type KernelLanguage } from "../kernels.js";
 import { pauseSandbox, resumeSandbox } from "../lifecycle.js";
 import { CapacityError } from "../capacity.js";
 import type { Capacity } from "../capacity.js";
+import type { BootScheduler } from "../boot-scheduler.js";
 import { computeCost } from "../cost.js";
 import { log } from "../logger.js";
 import type { MetricsHistory } from "../metrics.js";
@@ -53,6 +54,7 @@ interface Deps {
   backups: BackupRegistry;
   history?: MetricsHistory;
   capacity?: Capacity;
+  bootScheduler?: BootScheduler;
   /** Re-read provider keys (file/keychain/env) and hot-swap the egress gateway. */
   reloadKeys?: () => { providers: number };
 }
@@ -861,7 +863,7 @@ async function handle(
 
 async function createSandbox(
   res: ServerResponse,
-  { config, driver, store, capacity }: Pick<Deps, "config" | "driver" | "store" | "capacity">,
+  { config, driver, store, capacity, bootScheduler }: Pick<Deps, "config" | "driver" | "store" | "capacity" | "bootScheduler">,
   body: Record<string, unknown>,
 ): Promise<void> {
   const id = SandboxStore.newId();
@@ -991,7 +993,25 @@ async function createSandbox(
   if (egressToken) store.addEgressToken(egressToken, id, egressPolicy);
 
   const provision = () =>
-    driver.create({
+    (driverName === "firecracker" || driverName === "applevz") && bootScheduler
+      ? bootScheduler.run(`create:${id}`, () => driver.create({
+        id, image, driver: driverName, env, labels, persist, setup: setupSteps,
+        repo, repoRef, limits, networked, writableRootfs, cpuset,
+        onProgress: (phase) => {
+          const r = store.get(id);
+          if (r?.status === "creating") {
+            r.statusReason = phase;
+            store.add(r);
+          }
+        },
+      }), () => {
+        const r = store.get(id);
+        if (r?.status === "creating") {
+          r.statusReason = "queued for microVM boot";
+          store.add(r);
+        }
+      })
+      : driver.create({
       id, image, driver: driverName, env, labels, persist, setup: setupSteps,
       repo, repoRef, limits, networked, writableRootfs, cpuset,
       onProgress: (phase) => {
@@ -1001,7 +1021,7 @@ async function createSandbox(
           store.add(r);
         }
       },
-    });
+      });
 
   // Terminal transitions. Both re-check the store: a DELETE mid-create is the
   // cancel path, and must win — never resurrect a destroyed record.
@@ -1053,8 +1073,8 @@ async function createSandbox(
   sendJson(res, 201, record);
   void provision()
     .then(() => void finishOk())
-    .catch((err) => finishFail(err, /* keepRecord */ true))
-    .catch((err) => log.error("background create cleanup failed", { sandbox: id, error: errorMessage(err) }));
+     .catch((err: unknown) => finishFail(err, /* keepRecord */ true))
+     .catch((err: unknown) => log.error("background create cleanup failed", { sandbox: id, error: errorMessage(err) }));
 }
 
 async function stopSandbox(

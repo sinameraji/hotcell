@@ -114,6 +114,10 @@ export interface Config {
   defaultCpus: number;
   /** Default per-sandbox process/thread cap for new sandboxes (`0` = unlimited). */
   defaultPidsLimit: number;
+  /** Maximum simultaneous cold microVM creates/resumes (`0` = unlimited). */
+  microvmBootConcurrency: number;
+  /** Maximum time a microVM create waits for a boot slot (`0` = unlimited). */
+  microvmBootQueueTimeoutMs: number;
   /**
    * Admission control: `enforce` rejects `create` when the host's memory budget
    * is exhausted (prevents over-subscription / OOM when launching many
@@ -338,6 +342,8 @@ export function loadConfig(): Config {
     defaultMemoryMb: Number(env("DEFAULT_MEMORY_MB") ?? 0),
     defaultCpus: Number(env("DEFAULT_CPUS") ?? 0),
     defaultPidsLimit: Number(env("DEFAULT_PIDS") ?? 0),
+    microvmBootConcurrency: Number(env("MICROVM_BOOT_CONCURRENCY") ?? 4),
+    microvmBootQueueTimeoutMs: Number(env("MICROVM_BOOT_QUEUE_TIMEOUT_MS") ?? 120000),
     admission: env("ADMISSION") === "off" ? "off" : "enforce",
     hostMemoryMb: Number(env("HOST_MEMORY_MB") ?? 0),
     hostCpus: Number(env("HOST_CPUS") ?? 0),
