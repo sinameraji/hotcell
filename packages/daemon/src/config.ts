@@ -114,7 +114,7 @@ export interface Config {
   defaultCpus: number;
   /** Default per-sandbox process/thread cap for new sandboxes (`0` = unlimited). */
   defaultPidsLimit: number;
-  /** Maximum simultaneous cold microVM creates/resumes (`0` = unlimited). */
+  /** Maximum simultaneous cold microVM creates (`0` = unlimited). */
   microvmBootConcurrency: number;
   /** Maximum time a microVM create waits for a boot slot (`0` = unlimited). */
   microvmBootQueueTimeoutMs: number;
