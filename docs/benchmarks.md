@@ -81,12 +81,10 @@ Caveats, because this number is attractive and easy to misuse:
 
 - It is **not an official TTI measurement**. It used hotcell's Alpine base image and an `echo` probe with a custom timer, not the harness's `node:22-slim` + `node -v`. `node -v` alone adds process-spawn cost.
 - n = 10, localhost.
-- Known defects currently stop warm pools from serving real workload images, so this floor is **not reachable in normal use today**:
-  1. Setting a daemon-wide default limit (`HOTCELL_DEFAULT_MEMORY_MB` and friends) makes every create ineligible for adoption — eligibility requires no explicit limits, and the daemon folds its defaults into every request — so the sandbox cold-boots while a full pool sits idle. Affects both microVM drivers, and it is what silently defeated adoption in the two warm runs in the table above.
-  2. On Apple VZ the pool image is hardcoded to the built-in Alpine base image (`applevz.ts`, a `readonly` field), so a `node:22-slim` create can never adopt a spare. Firecracker does not share this defect — its pool image follows the daemon's configured image — though its pool was not successfully exercised in these runs.
-- **Pool depth, not adopt latency, is the real constraint.** Spares refill *serially* at ~2.55 s each (~0.39 guests/sec), while cold creates fan out in parallel at ~3.4/sec on the same host. A pool therefore only wins for the first N requests against an idle daemon; past that it refills slower than cold-booting. Sizing a pool to absorb a 100-wide burst also means holding 100 guests' worth of RAM, which no laptop has.
+- The documented defects that blocked normal adoption have since been fixed in the current code: daemon defaults are matched against pool limits, Apple VZ follows the configured pool image, refill is bounded-parallel, and pool reservations are included in admission accounting. The result above predates those fixes and must not be used as a current warm-pool TTI row.
+- **Pool depth, not adopt latency, is the real constraint.** Refill is bounded-parallel, but still competes for host CPU and memory with foreground boots. A pool therefore only wins while an eligible spare is available; beyond pool depth, the request follows the cold path. Sizing a pool to absorb a 100-wide burst also means holding 100 guests' worth of RAM, which no laptop has.
 
-Treat 24 ms as evidence that the adopt path itself is fast, not as a TTI hotcell can currently deliver, and not as something that scales to bursts. Making adoption fire at all, refilling pools in parallel, and making pooled guests visible to admission control are the open work.
+Treat 24 ms as evidence that the adopt path itself is fast, not as a current official TTI result. Rerun the ComputeSDK harness with a matching image and resource shape, and set `WARM_POOL_DEPTH` in `evidence/opencode-benchmark/harness/bench-suite.sh` so the harness waits for the pool to fill before measuring.
 
 ### sandbox-dax
 
@@ -129,6 +127,7 @@ Measuring this also surfaced and fixed three product bugs (a `writableRootfs` ga
 - **Boot times are consistent** — microVM p95 within 9–94 ms of median over 100 cold boots.
 - **Cold microVM boots are slow** — ~2.6 s, second-slowest against the published field, until warm pools cover real images.
 - **Single-host burst is the weak spot** — one machine is one machine.
+- **MicroVM boot concurrency is bounded by default** — `HOTCELL_MICROVM_BOOT_CONCURRENCY` defaults to 4 and queued creates are visible through `/capacity.boot`; tune this per host rather than launching an unbounded boot storm.
 - **Failures are clean** — typed 4xx/5xx from admission control, no hangs; 11 of 13 runs at 100 % success, worst case 30/100 under deliberate memory pressure.
 - **Real build workloads run at roughly a 16 % virtualisation cost**, with default-deny egress adding nothing measurable — and the demand curve behind that number (memory floor, CPU knee) is published rather than reduced to one row.
 
