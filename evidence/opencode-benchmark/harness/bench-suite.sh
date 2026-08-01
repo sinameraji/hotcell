@@ -23,6 +23,7 @@
 #   OUTDIR    where raw + summary land (default /tmp/bench-suite)
 #   WARM_POOL_DEPTH  wait for this many ready spares before measuring (default 0)
 #   BENCH_IMAGE image used by the benchmark sandbox (default ubuntu:24.04)
+#   TURBO_CONCURRENCY maximum concurrent typecheck workers (default unlimited)
 set +e
 CONFIGS=${CONFIGS:-"24576:8"}
 REPS=${REPS:-3}
@@ -34,6 +35,7 @@ REGION=${REGION:-gcp-n2-nested}
 OUTDIR=${OUTDIR:-/tmp/bench-suite}
 WARM_POOL_DEPTH=${WARM_POOL_DEPTH:-${HOTCELL_FC_WARM_POOL:-0}}
 BENCH_IMAGE=${BENCH_IMAGE:-ubuntu:24.04}
+TURBO_CONCURRENCY=${TURBO_CONCURRENCY:-}
 mkdir -p "$OUTDIR"
 SUMMARY="$OUTDIR/summary.tsv"
 printf 'mem_mb\tcpus\trep\tresult\tclone_ms\tinstall_ms\ttypecheck_ms\ttotal_ms\tpeak_used_gib\tegress\n' > "$SUMMARY"
@@ -94,6 +96,7 @@ classify(){ # raw-file -> RESULT
   grep -qE '✅ \|[[:space:]]*$' "$f" && { echo PASS; return; }
   grep -qE 'ADMISSION|CREATE_FAILED|503' "$f" && { echo ADMISSION; return; }
   grep -qE 'node-gyp ENOENT|Cannot run .*turbo\.json|install script from .* exited' "$f" && { echo INSTALL_FLAKE; return; }
+  grep -qE 'BENCH_MEM[[:space:]]+cgroup_oom_kill[[:space:]]+[1-9]' "$f" && { echo OOM; return; }
   local minav; minav=$(awk '$1=="BENCH_MEM"&&$2=="min_avail_kib"{print $3}' "$f" | tail -1)
   { grep -qiE 'SIGKILL|Out of memory|oom-kill|Killed process|Cannot allocate' "$f"; } && { echo OOM; return; }
   [ -n "$minav" ] && [ "$minav" -lt 262144 ] 2>/dev/null && { echo OOM; return; }
@@ -118,7 +121,7 @@ for cfg in $CONFIGS; do
     tag="mem${MEM}_cpu${CPUS}_r${REP}"; raw="$OUTDIR/$tag.txt"
     LOG "RUN $tag (cpuset=$CPUSET networked=$NETWORKED)"
     {
-      echo "### CONFIG mem=${MEM}MB cpus=${CPUS} cpuset=${CPUSET} networked=${NETWORKED} writableRootfs=${WRITABLE_ROOTFS} rep=${REP} egress=${EGRESS} region=${REGION} $(date -u +%FT%TZ)"
+      echo "### CONFIG mem=${MEM}MB cpus=${CPUS} cpuset=${CPUSET} networked=${NETWORKED} writableRootfs=${WRITABLE_ROOTFS} turboConcurrency=${TURBO_CONCURRENCY:-unlimited} rep=${REP} egress=${EGRESS} region=${REGION} image=${BENCH_IMAGE} $(date -u +%FT%TZ)"
       RESP=$(curl -s --max-time 180 -X POST localhost:4750/sandboxes -H 'content-type: application/json' -d "{\"image\":\"${BENCH_IMAGE}\",\"driver\":\"firecracker\",\"networked\":${NETWORKED},\"writableRootfs\":${WRITABLE_ROOTFS},\"memoryMb\":${MEM},\"cpus\":${CPUS},\"cpuset\":\"${CPUSET}\"}")
       SB=$(echo "$RESP" | $NODE -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||("ERR:"+d))}catch{console.log("ERR:"+d)}})')
       echo "sandbox=$SB"
@@ -130,7 +133,7 @@ for cfg in $CONFIGS; do
         exj "$SB" '{"command":"echo mem=$(awk \"/MemTotal/{printf \\$2}\" /proc/meminfo)kib cpus=$(nproc); getent hosts registry.npmjs.org >/dev/null 2>&1 && echo DNS_OK || echo DNS_FAIL"}'
         exj "$SB" "{\"command\":\"echo $PB64 | base64 -d > /tmp/pb.sh; echo $RB64 | base64 -d > /tmp/runbench.sh; chmod +x /tmp/runbench.sh\"}"
         echo "############### BENCHMARK (${MEM}MB/${CPUS}cpu rep${REP}) ###############"
-        exj "$SB" "{\"command\":\"BENCH_REGION=${REGION} bash /tmp/runbench.sh\"}"
+      exj "$SB" "{\"command\":\"TURBO_CONCURRENCY=${TURBO_CONCURRENCY} BENCH_REGION=${REGION} bash /tmp/runbench.sh\"}"
         echo "############### END ###############"
         curl -s -X DELETE "localhost:4750/sandboxes/$SB" >/dev/null 2>&1
       fi
