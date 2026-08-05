@@ -200,6 +200,14 @@ This repo is the **open-source, single-node, self-hostable core** (Apache-2.0): 
 
 **Host note:** Firecracker needs Linux + KVM. GCE supports nested virtualization (and recent EC2 C8i/M8i/R8i now do too), so the $65k GCP credits cover the Linux/Firecracker dev+test host; the spare MacBook covers the Apple-VZ + container path. Get a domain with wildcard DNS early for preview-URL TLS testing.
 
+### Operational research: Coolify on Vultr
+
+As a self-hosting validation, we deployed Coolify as the host-level deployment and operations control plane on a Vultr VPS and published it at [`con.easyserver.net`](https://con.easyserver.net). The deployment confirms that a single-node Hotcell installation can sit behind a managed reverse proxy/TLS layer while keeping the platform's bootstrap and management ports private. The Coolify Sentinel heartbeat is a useful control-plane health signal; it should be part of a documented bring-up and incident checklist.
+
+This validates Coolify for **deployment/orchestration**, not for sandbox isolation. Hotcell still owns the runtime-driver boundary, per-sandbox resource limits, egress enforcement, credential handling, and workload observability. Coolify should therefore remain an optional operational layer above the daemon rather than a dependency of the sandbox core.
+
+The same host also exposes a local-management MCP endpoint at [`https://con.easyserver.net/mcp`](https://con.easyserver.net/mcp), registered for Codex and Claude as `vultr-coolify`. MCP credentials are stored outside this repository in protected local credential stores/environment variables and must never be committed. A future deployment recipe can use this endpoint for authenticated health checks and release operations without moving provider or server secrets into a sandbox.
+
 ---
 
 ## What you need beyond what you have
